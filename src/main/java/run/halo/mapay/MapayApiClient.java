@@ -22,7 +22,7 @@ import reactor.netty.http.client.HttpClient;
  *
  * <ol>
  *   <li>{@code GET /connect.php?act=login&appid=..&appkey=..&type=..&redirect_uri=..}
- *       returns {@code {code, url, qrcode}}; the browser is sent to {@code url}.</li>
+ *       returns {@code {code, url}}; the browser is sent to {@code url}.</li>
  *   <li>After the user authorises, Mapay redirects to
  *       {@code redirect_uri?type=..&code=..}.</li>
  *   <li>{@code GET /connect.php?act=callback&appid=..&appkey=..&type=..&code=..}
@@ -122,7 +122,6 @@ public class MapayApiClient {
         result.setMessage(asString(body.get("msg")));
         result.setType(asString(body.get("type")));
         result.setUrl(asString(body.get("url")));
-        result.setQrcode(asString(body.get("qrcode")));
         return result;
     }
 
@@ -162,7 +161,6 @@ public class MapayApiClient {
         private String message;
         private String type;
         private String url;
-        private String qrcode;
 
         public boolean isSuccess() {
             return code == 0 && StringUtils.hasText(url);
