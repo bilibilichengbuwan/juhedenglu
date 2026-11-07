@@ -84,6 +84,24 @@ public class MapayAuthWebFilter implements AuthenticationSecurityWebFilter {
         return "wechat".equals(provider) ? "wx" : provider;
     }
 
+    /**
+     * Mapay {@code type} value from the callback → Halo provider name (see
+     * https://login.mapay.cn/doc.php Step 3: the callback carries
+     * {@code ?type=..&code=..} with the Mapay value). WeChat is {@code wx}
+     * on Mapay's side but {@code wechat} in Halo; QQ and Alipay use the
+     * same value on both sides. Returns {@code null} for unknown values.
+     */
+    private static String providerFromMapayType(String mapayType) {
+        if (mapayType == null) {
+            return null;
+        }
+        return switch (mapayType) {
+            case "wx" -> "wechat";
+            case "qq", "alipay" -> mapayType;
+            default -> null;
+        };
+    }
+
     private static final String LOGIN_ERROR_URL = "/login?oauth2_error";
 
     private final MapayApiClient mapayApiClient;
@@ -165,9 +183,14 @@ public class MapayAuthWebFilter implements AuthenticationSecurityWebFilter {
 
     private Mono<Void> handleCallback(ServerWebExchange exchange, WebFilterChain chain) {
         var query = exchange.getRequest().getQueryParams();
-        var type = query.getFirst("type");
         var code = query.getFirst("code");
-        if (!SUPPORTED_TYPES.contains(type) || !StringUtils.hasText(code)) {
+        // Mapay echoes its own type value in the callback (wx for WeChat),
+        // so normalise it to the Halo provider name before anything else.
+        // Without this, a WeChat callback (?type=wx&code=..) was rejected
+        // here and bounced to /login?oauth2_error: back to the login page
+        // for visitors, or back to /uc still unbound for logged-in users.
+        var type = providerFromMapayType(query.getFirst("type"));
+        if (type == null || !StringUtils.hasText(code)) {
             return redirect(exchange, LOGIN_ERROR_URL);
         }
         return exchange.getSession()
