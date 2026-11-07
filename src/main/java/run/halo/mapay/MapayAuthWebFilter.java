@@ -8,7 +8,6 @@ import java.util.List;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.security.core.context.SecurityContextImpl;
 import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
@@ -37,8 +36,8 @@ import run.halo.app.security.AuthenticationSecurityWebFilter;
  *   <li>{@code GET /login/mapay/authorize/{type}} — starts the login or bind
  *       flow. Reads the AppID and AppKey from plugin settings, asks Mapay
  *       for an authorisation address and redirects the browser there.
- *       For WeChat on a desktop browser, when Mapay returns a
- *       {@code qrcode}, a QR scan page is rendered instead.</li>
+ *       The browser is always sent to the address Mapay returns, for all
+ *       three providers; no QR page is rendered in between.</li>
  *   <li>{@code GET /login/mapay/callback?type=..&code=..} — Mapay redirects
  *       here after authorisation. The {@code code} is exchanged server-side
  *       for the verified social user, which is then handed to Halo core as a
@@ -54,9 +53,8 @@ import run.halo.app.security.AuthenticationSecurityWebFilter;
  * done with a pending-login marker kept in the current WebSession: the
  * callback is only accepted when this session started an authorisation for
  * the same provider within the last 10 minutes, and the marker is consumed
- * on first use. A callback arriving in a different browser session (for
- * example after scanning a WeChat QR code with a phone) is rejected; the QR
- * page therefore also offers a link to continue in the same browser.
+ * on first use. A callback arriving in a different browser session is
+ * rejected, so the login must be finished in the browser that started it.
  *
  * <p>Credentials are never logged and the Mapay request URL (which carries
  * the AppKey as a query parameter) is never logged.
@@ -146,16 +144,11 @@ public class MapayAuthWebFilter implements AuthenticationSecurityWebFilter {
                         "聚合登录服务返回了一个无效的登录地址，请稍后重试，"
                             + "或联系服务商确认 AppID / AppKey 是否正确。");
                 }
-                var userAgent = exchange.getRequest().getHeaders().getFirst(HttpHeaders.USER_AGENT);
-                var inApp = userAgent != null
-                    && (userAgent.contains("MicroMessenger") || userAgent.contains("AlipayClient"));
-                // Doc: qrcode is returned for WeChat and Alipay. On desktop,
-                // show the QR page instead of jumping straight to the url.
-                if (("wechat".equals(type) || "alipay".equals(type))
-                    && StringUtils.hasText(result.getQrcode()) && !inApp) {
-                    return renderQrPage(exchange, result.getQrcode(), result.getUrl(),
-                        "wechat".equals(type) ? "微信" : "支付宝");
-                }
+                // The Mapay doc says to jump to the url it returns (Step 2).
+                // An intermediate QR page was tried before and dropped: the
+                // qrcode address does not render as an image, so WeChat and
+                // Alipay logins stalled there. Redirecting straight to the
+                // url lets Mapay's own login page handle it.
                 return redirect(exchange, result.getUrl());
             })
             .onErrorResume(e -> {
@@ -259,43 +252,6 @@ public class MapayAuthWebFilter implements AuthenticationSecurityWebFilter {
 
     private Mono<Void> redirect(ServerWebExchange exchange, String location) {
         return redirectStrategy.sendRedirect(exchange, URI.create(location));
-    }
-
-    private Mono<Void> renderQrPage(ServerWebExchange exchange, String qrcodeUrl,
-        String authorizeUrl, String providerName) {
-        var qr = HtmlUtils.htmlEscape(qrcodeUrl);
-        var url = HtmlUtils.htmlEscape(authorizeUrl);
-        var name = HtmlUtils.htmlEscape(providerName);
-        var html = """
-            <!DOCTYPE html>
-            <html lang="zh-CN">
-            <head><meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <title>%s扫码登录</title>
-            <style>
-              body{margin:0;background:#f7f6f2;color:#1f1e1b;
-                font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif;
-                display:flex;min-height:100vh;align-items:center;justify-content:center}
-              .card{background:#fff;border:1px solid #e8e7e3;border-radius:12px;
-                padding:32px 40px;text-align:center;max-width:360px}
-              img{width:220px;height:220px}
-              h1{font-size:20px;margin:16px 0 8px}
-              p{font-size:14px;color:#6b6a67}
-              a.btn{display:inline-block;margin-top:16px;background:#07c160;color:#fff;
-                padding:10px 20px;border-radius:8px;text-decoration:none}
-            </style></head>
-            <body><div class="card">
-            <img src="%s" alt="%s登录二维码">
-            <h1>%s扫码登录</h1>
-            <p>请用%s扫一扫上方二维码完成授权。</p>
-            <p>扫码后如果本页没有变化，请点下方按钮在浏览器中继续。</p>
-            <a class="btn" href="%s">在浏览器中继续</a>
-            </div></body></html>
-            """.formatted(name, qr, name, name, name, url);
-        var response = exchange.getResponse();
-        response.getHeaders().setContentType(MediaType.TEXT_HTML);
-        var buffer = response.bufferFactory().wrap(html.getBytes(StandardCharsets.UTF_8));
-        return response.writeWith(Mono.just(buffer));
     }
 
     /**
