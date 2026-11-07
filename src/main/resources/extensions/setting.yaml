@@ -1,0 +1,30 @@
+apiVersion: v1alpha1
+kind: Setting
+metadata:
+  name: mapay-setting
+spec:
+  forms:
+    - group: mapay
+      label: "聚合登录配置"
+      formSchema:
+        - $formkit: text
+          name: appId
+          label: "AppID"
+          help: "聚合登录服务商提供的 AppID，在服务商后台查看"
+          validation: required:trim
+        - $formkit: password
+          name: appKey
+          label: "AppKey"
+          help: "聚合登录服务商提供的 AppKey，在服务商后台查看"
+          validation: required:trim
+        - $formkit: text
+          name: apiBaseUrl
+          label: "聚合登录服务地址"
+          help: "一般不用改。只有服务商的地址变了才改，必须以 https:// 开头。"
+          value: https://login.mapay.cn
+          validation: required:trim
+        - $formkit: text
+          name: siteUrl
+          label: "站点对外地址（可选）"
+          help: "留空时自动取 Halo 配置的外部访问地址来拼回调地址。如果你的站点在反向代理后面、或者想用另一个域名做回调，在这里填，如 https://你的域名（不要带末尾斜杠）。"
+          validation: trim
