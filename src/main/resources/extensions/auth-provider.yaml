@@ -1,0 +1,56 @@
+apiVersion: auth.halo.run/v1alpha1
+kind: AuthProvider
+metadata:
+  name: wechat
+  labels:
+    auth.halo.run/auth-binding: "true"
+spec:
+  displayName: 微信
+  description: 使用微信账号登录
+  logo: /plugins/juhedenglu/assets/static/wechat.jpg
+  website: https://weixin.qq.com
+  authenticationUrl: /login/mapay/authorize/wechat
+  bindingUrl: /login/mapay/authorize/wechat
+  unbindUrl: /apis/uc.api.auth.halo.run/v1alpha1/user-connections/wechat/disconnect
+  authType: oauth2
+  settingRef:
+    name: mapay-setting
+    group: mapay
+---
+apiVersion: auth.halo.run/v1alpha1
+kind: AuthProvider
+metadata:
+  name: qq
+  labels:
+    auth.halo.run/auth-binding: "true"
+spec:
+  displayName: QQ
+  description: 使用 QQ 账号登录
+  logo: /plugins/juhedenglu/assets/static/qq.jpg
+  website: https://im.qq.com
+  authenticationUrl: /login/mapay/authorize/qq
+  bindingUrl: /login/mapay/authorize/qq
+  unbindUrl: /apis/uc.api.auth.halo.run/v1alpha1/user-connections/qq/disconnect
+  authType: oauth2
+  settingRef:
+    name: mapay-setting
+    group: mapay
+---
+apiVersion: auth.halo.run/v1alpha1
+kind: AuthProvider
+metadata:
+  name: alipay
+  labels:
+    auth.halo.run/auth-binding: "true"
+spec:
+  displayName: 支付宝
+  description: 使用支付宝账号登录
+  logo: /plugins/juhedenglu/assets/static/alipay.jpg
+  website: https://www.alipay.com
+  authenticationUrl: /login/mapay/authorize/alipay
+  bindingUrl: /login/mapay/authorize/alipay
+  unbindUrl: /apis/uc.api.auth.halo.run/v1alpha1/user-connections/alipay/disconnect
+  authType: oauth2
+  settingRef:
+    name: mapay-setting
+    group: mapay
