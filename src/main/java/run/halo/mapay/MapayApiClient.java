@@ -95,7 +95,9 @@ public class MapayApiClient {
      *
      * @param appId  AppID from plugin settings
      * @param appKey AppKey from plugin settings (never logged)
-     * @param type   {@code wechat}, {@code qq} or {@code alipay}
+     * @param type   Mapay {@code type} value: {@code qq}, {@code wx} or
+     *               {@code alipay} (callers map the Halo provider name first:
+     *               {@code wechat} → {@code wx})
      * @param code   code returned by Mapay to the callback URL
      * @return social user; {@code code == 0} and a non-blank {@code socialUid}
      *     mean success
