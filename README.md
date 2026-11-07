@@ -2,7 +2,7 @@
 
 为 Halo 博客接入微信、QQ、支付宝登录。访客可以用三方账号直接登录，也可以在个人中心绑定已有账号，用法和 Halo 官方的 GitHub 登录插件一样。
 
-[![Release](https://img.shields.io/github/v/release/bilibilichengbuwan/juhedenglu)](https://github.com/bilibilichengbuwan/juhedenglu/releases/tag/v1.0.0)
+[![Release](https://img.shields.io/github/v/release/bilibilichengbuwan/juhedenglu)](https://github.com/bilibilichengbuwan/juhedenglu/releases/tag/v1.0.1)
 [![Halo](https://img.shields.io/badge/Halo-%3E%3D%202.20.0-blue)](https://halo.run)
 [![License](https://img.shields.io/badge/license-GPL--3.0-green)](./LICENSE)
 
@@ -16,7 +16,7 @@
 
 ## 安装
 
-1. 在 [Releases](https://github.com/bilibilichengbuwan/juhedenglu/releases/tag/v1.0.0) 下载 `juhedenglu-1.0.0.jar`
+1. 在 [Releases](https://github.com/bilibilichengbuwan/juhedenglu/releases/tag/v1.0.1) 下载 `juhedenglu-1.0.1.jar`
 2. 打开 Halo Console → **插件** → **安装**，上传 JAR 并启用插件
 3. 在聚合登录服务商后台登记回调地址（见下节），获取 AppID 和 AppKey
 4. 打开 Halo Console → **用户** → **身份认证**，启用 **微信**、**QQ**、**支付宝**
@@ -67,6 +67,30 @@ https://你的域名/login/mapay/callback
 
 发起登录和授权回跳必须在同一个浏览器会话中进行。换浏览器、使用无痕窗口或中途清掉会话后回跳会被拒绝，需要重新发起登录。
 
+## 隐私说明
+
+本插件会连接外部聚合登录服务完成微信、QQ、支付宝登录。
+
+- **服务**：聚合登录服务，默认地址为 `https://login.mapay.cn`。插件设置里的“聚合登录服务地址”可以改成其他兼容的服务地址，实际使用的以你的设置为准。
+- **用途**：仅用于发起三方登录授权、换取三方用户信息。插件不做统计、不做遥测、不投放广告、不追踪用户。
+- **发送给服务的数据**：AppID、AppKey、回调地址（`https://你的域名/login/mapay/callback`）、授权成功后服务返回的 code。按服务官方文档，接口仅支持 GET 请求，AppKey 作为 URL 请求参数经 HTTPS 发送；插件不会在日志、错误页或异常信息中记录完整请求地址或 AppKey。
+- **从服务接收的数据**：对方账号 ID（social_uid）、昵称、头像地址、性别、所在地。
+- **写入 Halo 的数据**：Halo 核心据此创建用户（用户名、显示名、头像）并创建用户连接（登录方式 + 对方账号 ID）。插件本身不在数据库、文件或日志中保存任何用户信息；AppID 和 AppKey 只保存在 Halo 的插件设置里。
+- **解绑与删除**：在个人中心解绑会删除对应的用户连接；删除 Halo 用户时，其用户连接会一并删除（Halo 核心行为）。卸载插件后，已创建的用户账号和绑定关系仍保留在 Halo 中，插件不会删除它们；但微信、QQ、支付宝登录入口会消失，此前仅通过三方登录的账号将无法再用三方登录，需要管理员在 Console 中处理。
+- **数据保存位置和期限**：用户数据保存在你自己的 Halo 数据库中，保存期限由你控制；服务商一侧的数据处理以服务商的隐私政策为准。
+
+## 更新日志
+
+### 1.0.1
+
+- 修复微信登录回调：聚合登录服务回跳时 type=wx，之前会被拒绝导致微信登录和绑定失败
+- Java 包名由 `run.halo.mapay` 改为 `com.chengbuwan.mapay`
+- 新增隐私说明；日志不再记录异常详情，避免泄露请求地址或 AppKey
+
+### 1.0.0
+
+- 首次发布：微信、QQ、支付宝聚合登录，支持登录与个人中心绑定
+
 ## 从源码构建
 
 需要 Java 21：
@@ -75,7 +99,7 @@ https://你的域名/login/mapay/callback
 ./gradlew build
 ```
 
-构建产物在 `build/libs/juhedenglu-1.0.0.jar`。
+构建产物在 `build/libs/juhedenglu-1.0.1.jar`。
 
 ## 问题反馈
 
