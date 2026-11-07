@@ -1,0 +1,23 @@
+---
+apiVersion: "plugin.halo.run/v1alpha1"
+kind: "Plugin"
+metadata:
+  name: "juhedenglu"
+spec:
+  enabled: true
+  requires: ">=2.20.0"
+  author:
+    name: "chengbuwan"
+    website: "https://github.com/bilibilichengbuwan"
+  logo: "logo.svg"
+  homepage: "https://github.com/bilibilichengbuwan/juhedenglu"
+  repo: "https://github.com/bilibilichengbuwan/juhedenglu"
+  issues: "https://github.com/bilibilichengbuwan/juhedenglu/issues"
+  displayName: "聚合登录"
+  description: "通过聚合登录服务，让访客用微信、QQ、支付宝登录 Halo 并在个人中心绑定账号"
+  settingName: "mapay-setting"
+  configMapName: "mapay-config"
+  license:
+  - name: "GPL-3.0"
+    url: "https://github.com/bilibilichengbuwan/juhedenglu/blob/main/LICENSE"
+  version: "1.0.0"
