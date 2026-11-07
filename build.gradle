@@ -1,0 +1,35 @@
+plugins {
+    id 'java'
+    id "io.freefair.lombok" version "9.2.0"
+    id "run.halo.plugin.devtools" version "0.6.2"
+}
+
+group 'run.halo.mapay'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release.set(21)
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation platform('run.halo.tools.platform:plugin:2.27.0')
+    compileOnly 'run.halo.app:api'
+    // OAuth2AuthenticationToken / DefaultOAuth2User live in spring-security-oauth2-core,
+    // provided by the Halo runtime; compile-only here so nothing extra ships in the JAR.
+    compileOnly 'org.springframework.security:spring-security-oauth2-client'
+}
+
+halo {
+    version = '2.27'
+    debug = true
+}
