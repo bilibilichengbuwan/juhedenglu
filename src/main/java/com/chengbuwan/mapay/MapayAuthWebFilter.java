@@ -3,6 +3,9 @@ package com.chengbuwan.mapay;
 import java.io.Serializable;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.SecureRandom;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -38,23 +41,37 @@ import run.halo.app.security.AuthenticationSecurityWebFilter;
  *       for an authorisation address and redirects the browser there.
  *       The browser is always sent to the address Mapay returns, for all
  *       three providers; no QR page is rendered in between.</li>
- *   <li>{@code GET /login/mapay/callback?type=..&code=..} — Mapay redirects
- *       here after authorisation. The {@code code} is exchanged server-side
- *       for the verified social user, which is then handed to Halo core as a
- *       Spring {@link OAuth2AuthenticationToken}. Halo core
- *       ({@code MapOAuth2AuthenticationFilter}, present since Halo 2.20.0)
- *       takes it from there: it finds or creates the Halo user, creates the
- *       {@code UserConnection}, establishes the session, remember-me, device
- *       and login logs. This plugin never creates users, sessions or
- *       {@code UserConnection}s itself.</li>
+ *   <li>{@code GET /login/mapay/callback/{state}?type=..&code=..} — Mapay
+ *       redirects here after authorisation. The {@code state} is a
+ *       per-authorisation one-time value (see below); the {@code code} is
+ *       exchanged server-side for the verified social user, which is then
+ *       handed to Halo core as a Spring {@link OAuth2AuthenticationToken}.
+ *       Halo core ({@code MapOAuth2AuthenticationFilter}, present since
+ *       Halo 2.20.0) takes it from there: it finds or creates the Halo
+ *       user, creates the {@code UserConnection}, establishes the session,
+ *       remember-me, device and login logs. This plugin never creates
+ *       users, sessions or {@code UserConnection}s itself.</li>
  * </ul>
  *
- * <p>Mapay does not support a {@code state} parameter, so CSRF protection is
- * done with a pending-login marker kept in the current WebSession: the
- * callback is only accepted when this session started an authorisation for
- * the same provider within the last 10 minutes, and the marker is consumed
- * on first use. A callback arriving in a different browser session is
- * rejected, so the login must be finished in the browser that started it.
+ * <p>Mapay does not support a {@code state} parameter, so the one-time
+ * {@code state} travels as a path segment of the callback URL instead: every
+ * authorisation generates an unpredictable value (32 random bytes, URL-safe
+ * Base64), stores it in the current WebSession together with the provider and
+ * the creation time, and sends Mapay a callback URL of the form
+ * {@code /login/mapay/callback/{state}}. Mapay redirects the browser to that
+ * URL with {@code ?type=..&code=..} appended, so the state comes back
+ * untouched. The callback is only accepted when the state in the URL matches
+ * the one stored in this session (constant-time comparison), for the same
+ * provider, within 10 minutes — and the stored value is consumed by the
+ * first callback that presents itself, valid or not, so it can never be
+ * replayed. A callback without a state, with a wrong state, or arriving in a
+ * different browser session is rejected and its {@code code} is never
+ * exchanged or used for login or binding. Without this, an attacker could
+ * take their own authorisation {@code code}, induce a logged-in victim to
+ * start an authorisation, and then make the victim open the attacker's
+ * callback URL, binding the attacker's social identity to the victim's
+ * account (account takeover, reproduced by the Halo App Store review on
+ * 2.27.1 against version 1.0.1).
  *
  * <p>Credentials are never logged and the Mapay request URL (which carries
  * the AppKey as a query parameter) is never logged.
@@ -74,6 +91,33 @@ public class MapayAuthWebFilter implements AuthenticationSecurityWebFilter {
     private static final long PENDING_TTL_MILLIS = 10 * 60 * 1000L;
 
     private static final List<String> SUPPORTED_TYPES = List.of("wechat", "qq", "alipay");
+
+    /** Source of the unpredictable one-time {@code state} values. */
+    private static final SecureRandom SECURE_RANDOM = new SecureRandom();
+
+    /**
+     * Generates an unpredictable one-time {@code state}: 32 random bytes,
+     * URL-safe Base64 without padding (43 characters, safe in a URL path
+     * segment). Guessing it is infeasible (256 bits of entropy).
+     */
+    private static String newState() {
+        var bytes = new byte[32];
+        SECURE_RANDOM.nextBytes(bytes);
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+    }
+
+    /**
+     * Constant-time comparison of the stored and presented {@code state}, so
+     * the value cannot be guessed byte by byte from timing differences.
+     */
+    private static boolean stateMatches(String expected, String actual) {
+        if (expected == null || actual == null) {
+            return false;
+        }
+        return MessageDigest.isEqual(
+            expected.getBytes(StandardCharsets.UTF_8),
+            actual.getBytes(StandardCharsets.UTF_8));
+    }
 
     /**
      * Halo provider name → Mapay {@code type} value (see
@@ -128,8 +172,16 @@ public class MapayAuthWebFilter implements AuthenticationSecurityWebFilter {
             }
             return handleAuthorize(exchange, type);
         }
-        if (CALLBACK_PATH.equals(path)) {
-            return handleCallback(exchange, chain);
+        if (path.equals(CALLBACK_PATH) || path.startsWith(CALLBACK_PATH + "/")) {
+            // The state is the first path segment after /login/mapay/callback.
+            // A bare /login/mapay/callback (no state) is rejected in
+            // handleCallback: without a state there is nothing to verify the
+            // code against, so it must never be exchanged.
+            String state = null;
+            if (path.length() > CALLBACK_PATH.length() + 1) {
+                state = path.substring(CALLBACK_PATH.length() + 1);
+            }
+            return handleCallback(exchange, chain, state);
         }
         return chain.filter(exchange);
     }
@@ -138,13 +190,18 @@ public class MapayAuthWebFilter implements AuthenticationSecurityWebFilter {
         return loadCredentials()
             .flatMap(credentials -> exchange.getSession()
                 .flatMap(session -> {
+                    // One unpredictable state per authorisation, bound to this
+                    // session. It travels to Mapay inside the callback URL
+                    // and is verified once when the callback comes back.
+                    var state = newState();
                     session.getAttributes().put(SESSION_PENDING_ATTR,
-                        new PendingLogin(type, System.currentTimeMillis()));
-                    return session.save().thenReturn(credentials);
+                        new PendingLogin(type, state, System.currentTimeMillis()));
+                    return session.save().thenReturn(new AuthorizeRequest(credentials, state));
                 })
-                .flatMap(saved -> mapayApiClient.login(
-                    saved.appId(), saved.appKey(), mapayType(type),
-                    callbackUrl(exchange, saved.siteUrl()), saved.apiBaseUrl())))
+                .flatMap(request -> mapayApiClient.login(
+                    request.credentials().appId(), request.credentials().appKey(), mapayType(type),
+                    callbackUrl(exchange, request.credentials().siteUrl(), request.state()),
+                    request.credentials().apiBaseUrl())))
             .flatMap(result -> {
                 if (!result.isSuccess()) {
                     log.warn("Mapay login request failed for provider {}: code={}",
@@ -185,7 +242,8 @@ public class MapayAuthWebFilter implements AuthenticationSecurityWebFilter {
             });
     }
 
-    private Mono<Void> handleCallback(ServerWebExchange exchange, WebFilterChain chain) {
+    private Mono<Void> handleCallback(ServerWebExchange exchange, WebFilterChain chain,
+        String state) {
         var query = exchange.getRequest().getQueryParams();
         var code = query.getFirst("code");
         // Mapay echoes its own type value in the callback (wx for WeChat),
@@ -194,19 +252,29 @@ public class MapayAuthWebFilter implements AuthenticationSecurityWebFilter {
         // here and bounced to /login?oauth2_error: back to the login page
         // for visitors, or back to /uc still unbound for logged-in users.
         var type = providerFromMapayType(query.getFirst("type"));
-        if (type == null || !StringUtils.hasText(code)) {
-            return redirect(exchange, LOGIN_ERROR_URL);
+        if (type == null || !StringUtils.hasText(code) || !StringUtils.hasText(state)
+            || state.indexOf('/') >= 0) {
+            // No state (or a malformed one) means there is nothing to verify
+            // this code against: reject it outright, never exchange it.
+            log.warn("Mapay callback rejected for provider {}: missing or malformed state", type);
+            return renderErrorPage(exchange, "这次登录会话已过期",
+                "这次回调没有携带有效的一次性校验码，请回到本站重新点一次绑定或登录。");
         }
         return exchange.getSession()
             .flatMap(session -> {
-                var pending = (PendingLogin) session.getAttributes().get(SESSION_PENDING_ATTR);
+                // One-time use: the pending authorisation is consumed by the
+                // first callback that presents itself, whether it verifies or
+                // not, so a code can never be replayed against it.
+                var pending = (PendingLogin) session.getAttributes().remove(SESSION_PENDING_ATTR);
+                var save = session.save();
                 if (pending == null || !pending.type().equals(type)
+                    || !stateMatches(pending.state(), state)
                     || System.currentTimeMillis() - pending.createdAtMillis() > PENDING_TTL_MILLIS) {
-                    log.warn("Mapay callback rejected for provider {}: no pending login in session", type);
-                    return Mono.error(new IllegalStateException("No pending Mapay login in session"));
+                    log.warn("Mapay callback rejected for provider {}: state check failed", type);
+                    return save.then(Mono.error(
+                        new IllegalStateException("Invalid or expired Mapay state")));
                 }
-                session.getAttributes().remove(SESSION_PENDING_ATTR);
-                return session.save().thenReturn(type);
+                return save.thenReturn(type);
             })
             .flatMap(validatedType -> loadCredentials()
                 .flatMap(credentials -> mapayApiClient.callback(
@@ -234,7 +302,7 @@ public class MapayAuthWebFilter implements AuthenticationSecurityWebFilter {
                 log.warn("Failed to handle Mapay callback for provider {}", type);
                 if (e instanceof IllegalStateException) {
                     return renderErrorPage(exchange, "这次登录会话已过期",
-                        "这次回调不是从本站发起的、或者已经超过 10 分钟，"
+                        "这次回调的一次性校验没有通过，或者已经超过 10 分钟，"
                             + "请回到本站重新点一次绑定或登录。");
                 }
                 return renderErrorPage(exchange, "聚合登录失败",
@@ -320,13 +388,22 @@ public class MapayAuthWebFilter implements AuthenticationSecurityWebFilter {
     }
 
     /**
-     * Builds the callback URL. Priority: the user-configured site URL in the
-     * plugin settings, then Halo's configured external URL, then the current
-     * request's own scheme + host. Nothing here is hardcoded to any domain.
+     * Builds the callback URL. The one-time {@code state} is appended as a
+     * path segment ({@code /login/mapay/callback/{state}}): Mapay redirects
+     * the browser to this URL with {@code ?type=..&code=..} appended, so the
+     * state survives the round trip untouched. A query parameter would not
+     * survive: Mapay appends its own {@code ?type=..&code=..} to the URL it
+     * was given. Priority for the base: the user-configured site URL in the
+     * plugin settings (only if it starts with {@code https://} — an
+     * {@code http://} value would send the authorisation {@code code} and
+     * the one-time {@code state} over plaintext HTTP, where a network
+     * attacker could steal both; anything else falls through), then Halo's
+     * configured external URL, then the current request's own scheme + host.
+     * Nothing here is hardcoded to any domain.
      */
-    private String callbackUrl(ServerWebExchange exchange, String siteUrl) {
+    private String callbackUrl(ServerWebExchange exchange, String siteUrl, String state) {
         String base;
-        if (StringUtils.hasText(siteUrl)) {
+        if (StringUtils.hasText(siteUrl) && siteUrl.trim().startsWith("https://")) {
             base = siteUrl.trim().replaceAll("/+$", "");
         } else {
             var raw = externalUrlSupplier.getRaw();
@@ -337,7 +414,7 @@ public class MapayAuthWebFilter implements AuthenticationSecurityWebFilter {
                 base = uri.getScheme() + "://" + uri.getAuthority();
             }
         }
-        return base + CALLBACK_PATH;
+        return base + CALLBACK_PATH + "/" + state;
     }
 
     /**
@@ -363,9 +440,14 @@ public class MapayAuthWebFilter implements AuthenticationSecurityWebFilter {
     }
 
     /** Marker kept in the WebSession between authorize and callback. */
-    private record PendingLogin(String type, long createdAtMillis) implements Serializable {
+    private record PendingLogin(String type, String state, long createdAtMillis)
+        implements Serializable {
     }
 
     private record Credentials(String appId, String appKey, String apiBaseUrl, String siteUrl) {
+    }
+
+    /** Credentials plus the one-time state generated for this authorisation. */
+    private record AuthorizeRequest(Credentials credentials, String state) {
     }
 }
